@@ -1,0 +1,7 @@
+__pycache__/
+build/
+dist/
+*.spec
+# redaction outputs and legends hold real data: never commit them
+*_redacted*
+*_legend*
