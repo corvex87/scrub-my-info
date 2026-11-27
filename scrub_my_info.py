@@ -9,6 +9,8 @@ import sys
 from collections import Counter
 from pathlib import Path
 
+VERSION = "0.1"
+
 
 def luhn(s):
     d = [int(c) for c in s if c.isdigit()]
@@ -124,7 +126,7 @@ def gui():
     from tkinter import filedialog, messagebox, scrolledtext, ttk
 
     root = tk.Tk()
-    root.title("scrub my info")
+    root.title(f"scrub my info v{VERSION}")
     root.geometry("1500x760")
     state = {"path": None}
 
