@@ -118,17 +118,32 @@ def legend(mapping):
     return "\n".join(f"{ph}: {one_line(mapping[ph])}" for ph in sorted(mapping, key=key))
 
 
+DARK = {"bg": "#202020", "fg": "#e0e0e0", "field": "#181818", "button": "#333333", "active": "#444444",
+        "select": "#264f78", "accent": "#3b82f6"}
+
+
+def windows_dark():
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize") as k:
+            return winreg.QueryValueEx(k, "AppsUseLightTheme")[0] == 0
+    except (OSError, ImportError):  # not Windows / key missing: default to light
+        return False
+
+
 def gui():
     import queue
     import threading
     import time
     import tkinter as tk
-    from tkinter import filedialog, messagebox, scrolledtext, ttk
+    from tkinter import filedialog, messagebox, ttk
 
     root = tk.Tk()
     root.title(f"scrub my info v{VERSION}")
     root.geometry("1500x760")
-    state = {"path": None}
+    state = {"path": None, "dark": False}
+    style = ttk.Style(root)
+    style.theme_use("clam")  # the native Windows ttk theme ignores colors; clam can be recolored for dark mode
 
     bar = tk.Frame(root)
     bar.pack(fill="x", padx=6, pady=6)
@@ -139,8 +154,11 @@ def gui():
     def pane(title, width=80):
         f = tk.Frame(panes)
         tk.Label(f, text=title, anchor="w").pack(fill="x")
-        t = scrolledtext.ScrolledText(f, wrap="word", undo=True, font=("Consolas", 10), width=width)
-        t.pack(fill="both", expand=True)
+        t = tk.Text(f, wrap="word", undo=True, font=("Consolas", 10), width=width)
+        sb = ttk.Scrollbar(f, orient="vertical", command=t.yview)  # ttk so it can go dark; tk scrollbars are native on Windows
+        t.configure(yscrollcommand=sb.set)
+        sb.pack(side="right", fill="y")
+        t.pack(side="left", fill="both", expand=True)
         panes.add(f, stretch="always")
         return t
 
@@ -237,10 +255,59 @@ def gui():
                        ("Copy legend", lambda: copy(legend_box, "legend")), ("Save legend...", lambda: save(legend_box, "legend", ".txt"))]:
         buttons[label] = tk.Button(bar, text=label, command=cmd, padx=8)
         buttons[label].pack(side="left", padx=(0, 4))
+    d = DARK
+    originals = {}  # light mode = whatever Tk gave each widget, captured before the first recolor
+    ttk_dark = {
+        "TProgressbar": dict(troughcolor=d["field"], background=d["accent"], bordercolor=d["bg"], lightcolor=d["accent"], darkcolor=d["accent"]),
+        "TScrollbar": dict(troughcolor=d["field"], background=d["button"], bordercolor=d["bg"], arrowcolor=d["fg"], lightcolor=d["button"], darkcolor=d["button"]),
+    }
+    ttk_light = {s: {k: v for k in opts if (v := style.lookup(s, k))} for s, opts in ttk_dark.items()}
+    ttk_light["TProgressbar"].update(background=d["accent"], lightcolor=d["accent"], darkcolor=d["accent"])  # clam's grey fill is invisible
+    sb_map_light = style.map("TScrollbar", "background")
+
+    def theme_opts(w):
+        if isinstance(w, (tk.Text, tk.Entry)):
+            return dict(bg=d["field"], fg=d["fg"], insertbackground=d["fg"], selectbackground=d["select"],
+                        highlightbackground=d["bg"], highlightcolor=d["accent"])
+        if isinstance(w, tk.Button):
+            return dict(bg=d["button"], fg=d["fg"], activebackground=d["active"], activeforeground=d["fg"], disabledforeground="#777777")
+        if isinstance(w, tk.Label):
+            return dict(bg=d["bg"], fg=d["fg"])
+        if isinstance(w, (tk.Frame, tk.PanedWindow, tk.Tk)):
+            return dict(bg=d["bg"])
+        return {}
+
+    def apply_theme(dark):
+        state["dark"] = dark
+
+        def walk(w):
+            opts = theme_opts(w)
+            if opts:
+                saved = originals.setdefault(w, {k: w.cget(k) for k in opts})
+                w.configure(**(opts if dark else saved))
+            for c in w.winfo_children():
+                walk(c)
+        walk(root)
+        for s, opts in (ttk_dark if dark else ttk_light).items():
+            style.configure(s, **opts)
+        style.map("TScrollbar", background=[("active", d["active"])] if dark else sb_map_light)
+        theme_btn.config(text="Light mode" if dark else "Dark mode")
+        try:  # dark title bar, Windows 10 20H1+ only
+            import ctypes
+            root.update_idletasks()
+            hwnd = ctypes.windll.user32.GetParent(root.winfo_id())
+            flag = ctypes.c_int(1 if dark else 0)
+            ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, 20, ctypes.byref(flag), ctypes.sizeof(flag))
+        except (AttributeError, OSError):  # not Windows / old Windows: title bar just stays light
+            pass
+
+    theme_btn = tk.Button(bar, text="Dark mode", command=lambda: apply_theme(not state["dark"]), padx=8)
+    theme_btn.pack(side="right", padx=(4, 0))
     tk.Label(bar, text="  also hide (comma-separated names, companies...):").pack(side="left")
     entry = tk.Entry(bar, textvariable=terms)
     entry.pack(side="left", fill="x", expand=True)
     entry.bind("<Return>", lambda e: run())
+    apply_theme(windows_dark())
     root.mainloop()
 
 
